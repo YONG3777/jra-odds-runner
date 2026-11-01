@@ -1,0 +1,79 @@
+name: JRA free launcher (no betting)
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: check=private access / discover=official schedule / watch=timed collection
+        type: choice
+        options: [check, discover, watch]
+        default: check
+      window:
+        description: JST target-time window
+        type: choice
+        options: [morning, midday, late]
+        default: morning
+  schedule:
+    - cron: '47 21 * * *'
+    - cron: '47 1 * * *'
+    - cron: '47 4 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: capture-${{ (github.event_name == 'schedule' || inputs.mode == 'watch') && (github.event.schedule == '47 21 * * *' && 'morning' || github.event.schedule == '47 1 * * *' && 'midday' || github.event.schedule == '47 4 * * *' && 'late' || inputs.window) || github.run_id }}
+  cancel-in-progress: false
+jobs:
+  collect:
+    if: github.event_name == 'workflow_dispatch' || vars.COLLECT_ENABLED == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Verify private access credential is configured
+        env:
+          PRIVATE_TOKEN: ${{ secrets.JRA_DATA_TOKEN }}
+        run: |
+          if [ -z "$PRIVATE_TOKEN" ]; then
+            echo 'JRA_DATA_TOKEN is missing. No source checkout or collection performed.'
+            exit 1
+          fi
+      - uses: actions/checkout@v6
+        with:
+          repository: YONG3777/jra-odds
+          ref: 3821135e5a1ade234fa101aaf3b04af4b3d1a3d1
+          token: ${{ secrets.JRA_DATA_TOKEN }}
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Verify fixed source and collection logic
+        run: |
+          python -m unittest discover -q
+          python - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          for name, expected in json.loads(Path('SHA256_MANIFEST.json').read_text()).items():
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == expected, name
+          print('Source manifest verified')
+          PY
+      - name: Collect and save to private repository only
+        env:
+          GITHUB_DATA_TOKEN: ${{ secrets.JRA_DATA_TOKEN }}
+          REQUESTED_MODE: ${{ inputs.mode }}
+          REQUESTED_WINDOW: ${{ inputs.window }}
+          EVENT_KIND: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          case "$EVENT_SCHEDULE" in
+            '47 21 * * *') COLLECT_WINDOW=morning ;;
+            '47 1 * * *') COLLECT_WINDOW=midday ;;
+            '47 4 * * *') COLLECT_WINDOW=late ;;
+            *) COLLECT_WINDOW="$REQUESTED_WINDOW" ;;
+          esac
+          if [ "$EVENT_KIND" = schedule ]; then
+            COLLECT_MODE=watch
+          else
+            COLLECT_MODE="$REQUESTED_MODE"
+          fi
+          export COLLECT_WINDOW COLLECT_MODE
+          python github_runner.py
+      # No artifacts, CSV, raw source, or credential files are uploaded publicly.
