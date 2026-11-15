@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           repository: YONG3777/jra-odds
-          ref: 1650984ae1eca467f82f79a27f97aa39d55025e9
+          ref: 046a58731a69d1290c3dc038df45f5e719fe307a
           token: ${{ secrets.JRA_DATA_TOKEN }}
           persist-credentials: false
       - uses: actions/setup-python@v6
